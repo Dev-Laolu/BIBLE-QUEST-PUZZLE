@@ -1,0 +1,6 @@
+{
+  "name": "Bible Quest: Word Search",
+  "description": "An engaging Bible knowledge word puzzle game with progressive difficulty levels, helpful word hints, a daily leaderboard, and cross-device account syncing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,115 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "Public profile and progression of a user, keyed by their authenticated UID",
+      "type": "object",
+      "properties": {
+        "username": {
+          "type": "string",
+          "description": "User's selected display name"
+        },
+        "level": {
+          "type": "integer",
+          "description": "Current progressive theme level of the user"
+        },
+        "xp": {
+          "type": "integer",
+          "description": "Experience points accumulated"
+        },
+        "gamesPlayed": {
+          "type": "integer",
+          "description": "Total words found or grids completed"
+        },
+        "hintsUsed": {
+          "type": "integer",
+          "description": "Total count of hints used"
+        },
+        "lastActive": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last activity timestamp"
+        }
+      },
+      "required": ["username", "level", "xp", "gamesPlayed", "hintsUsed", "lastActive"]
+    },
+    "LeaderboardEntry": {
+      "title": "Daily Leaderboard Entry",
+      "description": "Score submission for a specific day, to foster friendly competition",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "User UID who submitted this score"
+        },
+        "username": {
+          "type": "string",
+          "description": "Display name of the user"
+        },
+        "score": {
+          "type": "integer",
+          "description": "Score obtained in the word search puzzle"
+        },
+        "level": {
+          "type": "integer",
+          "description": "Difficulty level of the board solved"
+        },
+        "hintsUsed": {
+          "type": "integer",
+          "description": "Number of hints used in this run"
+        },
+        "completedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the score was recorded"
+        }
+      },
+      "required": ["userId", "username", "score", "level", "hintsUsed", "completedAt"]
+    },
+    "Activity": {
+      "title": "Community Activity",
+      "description": "Global log of player achievements displayed in the community feed",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "The UID of the player"
+        },
+        "username": {
+          "type": "string",
+          "description": "The display name of the player"
+        },
+        "text": {
+          "type": "string",
+          "description": "Descriptive text of the completed achievement"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When this activity happened"
+        }
+      },
+      "required": ["userId", "username", "text", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/User"
+      },
+      "description": "Syncs player profiles and progress across devices"
+    },
+    "/leaderboards/{dayId}/scores/{scoreId}": {
+      "schema": {
+        "$ref": "#/entities/LeaderboardEntry"
+      },
+      "description": "Daily leaderboard, where scoreId is the userId of the player"
+    },
+    "/activities/{activityId}": {
+      "schema": {
+        "$ref": "#/entities/Activity"
+      },
+      "description": "Community feed of players' recent achievements"
+    }
+  }
+}
