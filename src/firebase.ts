@@ -3,9 +3,20 @@ import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import firebaseConfig from "../firebase-applet-config.json";
 
+const firebaseApiKey = (import.meta as any).env?.VITE_FIREBASE_API_KEY;
+
+if (!firebaseApiKey) {
+  console.warn("Warning: VITE_FIREBASE_API_KEY is not defined in the environment.");
+}
+
+const finalConfig = {
+  ...firebaseConfig,
+  apiKey: firebaseApiKey || "",
+};
+
 // Initialize Firebase
-const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app);
+const app = initializeApp(finalConfig);
+export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth();
 
 export enum OperationType {
