@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { createContext, useContext, useState, useEffect, useRef } from "react";
 import {
   User,
   GoogleAuthProvider,
@@ -57,6 +57,7 @@ interface GameContextType {
   adminToggleBanUser: (email: string) => void;
   adminDeleteUser: (email: string) => void;
   getAllUsers: () => LocalUserAccount[];
+  users: LocalUserAccount[];
 
   // Game Progress Synchronization
   updateProgress: (wordsFound: number, hintsUsed: number, levelsPassed: number) => Promise<void>;
@@ -121,6 +122,13 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     ];
   });
 
+  const localAccountsRef = useRef<LocalUserAccount[]>(localAccounts);
+
+  // Synchronize localAccounts with its reference
+  useEffect(() => {
+    localAccountsRef.current = localAccounts;
+  }, [localAccounts]);
+
   const [activities, setActivities] = useState<CommunityActivity[]>([]);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const currentDayId = getTodayId();
@@ -175,6 +183,18 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // 3. Fallback to default firebase auth listener check
       const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
         if (currentUser) {
+          const emailString = (currentUser.email || `${currentUser.uid}@google.com`).toLowerCase();
+          const existingLocal = localAccountsRef.current.find(a => a.email.toLowerCase() === emailString);
+          if (existingLocal && existingLocal.isBanned) {
+            signOut(auth);
+            localStorage.removeItem("bible_quest_session_email");
+            setUser(null);
+            setProfile(null);
+            setIsGuest(true);
+            setLoading(false);
+            return;
+          }
+
           setIsGuest(false);
           setIsAdmin(false);
           const userRef = doc(db, "users", currentUser.uid);
@@ -187,6 +207,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
               // Update local registry cache too
               setLocalAccounts(prev => {
+                const existing = prev.find(a => a.email.toLowerCase() === currentUser.email?.toLowerCase());
+                const wasBanned = existing ? existing.isBanned : false;
                 const filtered = prev.filter(a => a.email.toLowerCase() !== currentUser.email?.toLowerCase());
                 return [
                   ...filtered,
@@ -197,7 +219,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     xp: cloudProf.xp,
                     gamesPlayed: cloudProf.gamesPlayed,
                     hintsUsed: cloudProf.hintsUsed,
-                    isBanned: false,
+                    isBanned: wasBanned,
                     isGoogleUser: true,
                   }
                 ];
@@ -220,6 +242,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
               // Save in local too
               setLocalAccounts(prev => {
+                const existing = prev.find(a => a.email.toLowerCase() === currentUser.email?.toLowerCase());
+                const wasBanned = existing ? existing.isBanned : false;
                 const filtered = prev.filter(a => a.email.toLowerCase() !== currentUser.email?.toLowerCase());
                 return [
                   ...filtered,
@@ -230,7 +254,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     xp: newProfile.xp,
                     gamesPlayed: newProfile.gamesPlayed,
                     hintsUsed: newProfile.hintsUsed,
-                    isBanned: false,
+                    isBanned: wasBanned,
                     isGoogleUser: true,
                   }
                 ];
@@ -242,7 +266,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             console.warn("Cloud connection limited or blocked. Using local accounts context.");
             // Offline representation mapping
             const email = currentUser.email || `${currentUser.uid}@google.com`;
-            const cachedAcc = localAccounts.find(a => a.email.toLowerCase() === email.toLowerCase());
+            const cachedAcc = localAccountsRef.current.find(a => a.email.toLowerCase() === email.toLowerCase());
             if (cachedAcc) {
               setProfile({
                 username: cachedAcc.username,
@@ -494,6 +518,9 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (localAccounts.some(acc => acc.email.toLowerCase() === normEmail)) {
       return "An account with this email already exists.";
     }
+    if (localAccounts.some(acc => acc.username.toLowerCase() === cleanUName.toLowerCase())) {
+      return "An account with this username already exists.";
+    }
 
     const newAcc: LocalUserAccount = {
       email: normEmail,
@@ -643,8 +670,12 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const adminAddUser = (email: string, username: string, pass: string, startLevel: number): string | null => {
     const norm = email.trim().toLowerCase();
+    const cleanUName = username.trim();
     if (localAccounts.some(acc => acc.email.toLowerCase() === norm)) {
       return "Email already registered.";
+    }
+    if (localAccounts.some(acc => acc.username.toLowerCase() === cleanUName.toLowerCase())) {
+      return "Username already registered.";
     }
 
     const newAcc: LocalUserAccount = {
@@ -665,19 +696,30 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const adminToggleBanUser = (email: string) => {
     const norm = email.trim().toLowerCase();
-    setLocalAccounts(prev =>
-      prev.map(acc => {
+    setLocalAccounts(prev => {
+      const updated = prev.map(acc => {
         if (acc.email.toLowerCase() === norm) {
           const nextBanned = !acc.isBanned;
           return { ...acc, isBanned: nextBanned };
         }
         return acc;
-      })
-    );
+      });
+
+      // If banned and is currently signed in user, log them out immediately
+      const found = updated.find(acc => acc.email.toLowerCase() === norm);
+      if (found && found.isBanned && user && user.email.toLowerCase() === norm) {
+        logOut();
+      }
+
+      return updated;
+    });
   };
 
   const adminDeleteUser = (email: string) => {
     const norm = email.trim().toLowerCase();
+    if (user && user.email.toLowerCase() === norm) {
+      logOut();
+    }
     setLocalAccounts(prev => prev.filter(acc => acc.email.toLowerCase() !== norm));
   };
 
@@ -859,6 +901,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         adminToggleBanUser,
         adminDeleteUser,
         getAllUsers,
+        users: localAccounts,
         updateProgress,
         submitLeaderboardScore,
         activities,

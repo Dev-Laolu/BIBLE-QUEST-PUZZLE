@@ -4,9 +4,9 @@ import { Shield, Sparkles, UserPlus, Users, ArrowLeft, Ban, CheckCircle, Mail, K
 import { motion } from "motion/react";
 
 export const AdminPanel: React.FC = () => {
-  const { getAllUsers, adminAddUser, adminToggleBanUser, adminDeleteUser, logOut } = useGame();
-  const users = getAllUsers();
+  const { users, adminAddUser, adminToggleBanUser, adminDeleteUser, logOut } = useGame();
 
+  const [deleteConfirmEmail, setDeleteConfirmEmail] = useState<string | null>(null);
   const [addMode, setAddMode] = useState(false);
   const [emailInput, setEmailInput] = useState("");
   const [usernameInput, setUsernameInput] = useState("");
@@ -265,30 +265,49 @@ export const AdminPanel: React.FC = () => {
                     </td>
                     <td className="p-4 text-right">
                       <div className="inline-flex gap-2">
-                        <button
-                          onClick={() => adminToggleBanUser(u.email)}
-                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono font-bold uppercase rounded-xl transition-all cursor-pointer
-                            ${u.isBanned
-                              ? "bg-emerald-950/20 border border-emerald-900/40 text-emerald-400 hover:bg-emerald-950/40"
-                              : "bg-red-950/20 border border-red-900/40 text-red-400 hover:bg-red-950/45"
-                            }
-                          `}
-                        >
-                          <Ban className="w-3.5 h-3.5" />
-                          {u.isBanned ? "Unban" : "Ban"}
-                        </button>
+                        {deleteConfirmEmail === u.email ? (
+                          <div className="flex items-center gap-1.5 bg-[#25120e] border border-red-900/40 p-1.5 rounded-xl">
+                            <span className="text-[10px] font-bold text-red-400 uppercase font-mono px-1">Confirm Delete?</span>
+                            <button
+                              onClick={() => {
+                                adminDeleteUser(u.email);
+                                setDeleteConfirmEmail(null);
+                              }}
+                              className="px-2 py-1 text-[10px] font-mono font-bold bg-red-600 hover:bg-red-700 text-white rounded-lg transition-all cursor-pointer"
+                            >
+                              Yes
+                            </button>
+                            <button
+                              onClick={() => setDeleteConfirmEmail(null)}
+                              className="px-2 py-1 text-[10px] font-mono font-bold bg-[#1d1613] hover:bg-[#2d1f1b] text-stone-400 rounded-lg transition-all cursor-pointer"
+                            >
+                              No
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <button
+                              onClick={() => adminToggleBanUser(u.email)}
+                              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono font-bold uppercase rounded-xl transition-all cursor-pointer
+                                ${u.isBanned
+                                  ? "bg-emerald-950/20 border border-emerald-900/40 text-emerald-400 hover:bg-emerald-950/40"
+                                  : "bg-red-950/20 border border-red-900/40 text-red-400 hover:bg-red-950/45"
+                                }
+                              `}
+                            >
+                              <Ban className="w-3.5 h-3.5" />
+                              {u.isBanned ? "Unban" : "Ban"}
+                            </button>
 
-                        <button
-                          onClick={() => {
-                            if (window.confirm(`Are you absolutely sure you want to permanently delete the pilgrim account for ${u.username}?`)) {
-                              adminDeleteUser(u.email);
-                            }
-                          }}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono font-bold uppercase rounded-xl bg-red-950/30 border border-red-900/40 text-red-300 hover:bg-red-950 transition-all cursor-pointer"
-                        >
-                          <Trash2 className="w-3.5 h-3.5 text-red-400" />
-                          Delete
-                        </button>
+                            <button
+                              onClick={() => setDeleteConfirmEmail(u.email)}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono font-bold uppercase rounded-xl bg-red-950/30 border border-red-900/40 text-red-300 hover:bg-red-950 transition-all cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5 text-red-400" />
+                              Delete
+                            </button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>
