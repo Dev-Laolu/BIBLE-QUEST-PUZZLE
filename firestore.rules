@@ -32,6 +32,7 @@ service cloud.firestore {
         && data.gamesPlayed is int && data.gamesPlayed >= 0
         && data.hintsUsed is int && data.hintsUsed >= 0
         && (!data.keys().hasAny(['email']) || data.email is string)
+        && (!data.keys().hasAny(['username_lowercase']) || data.username_lowercase is string)
         && (!data.keys().hasAny(['password']) || data.password is string)
         && (!data.keys().hasAny(['isBanned']) || data.isBanned is bool)
         && (!data.keys().hasAny(['isGoogleUser']) || data.isGoogleUser is bool);
@@ -54,7 +55,7 @@ service cloud.firestore {
     // Match patterns
     match /users/{userId} {
       allow get: if true;
-      allow list: if resource.data.username != null;
+      allow list: if true;
       allow create, update: if isValidId(userId)
                             && isValidUser(incoming());
       allow delete: if true; 

@@ -9,6 +9,7 @@ import {
 import {
   doc,
   getDoc,
+  getDocs,
   setDoc,
   deleteDoc,
   collection,
@@ -17,6 +18,7 @@ import {
   orderBy,
   limit,
   serverTimestamp,
+  where,
 } from "firebase/firestore";
 import { auth, db, handleFirestoreError, OperationType } from "../firebase";
 import { UserProfile, LeaderboardEntry, CommunityActivity, BibleTheme } from "../types";
@@ -163,23 +165,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
 
         if (cloudUsers.length > 0) {
-          setLocalAccounts((prev) => {
-            const merged = [...prev];
-            cloudUsers.forEach((cu) => {
-              const idx = merged.findIndex((u) => u.email.toLowerCase() === cu.email.toLowerCase());
-              if (idx !== -1) {
-                // Merge, retaining existing passwords if cloud doesn't have it
-                merged[idx] = {
-                  ...merged[idx],
-                  ...cu,
-                  password: cu.password || merged[idx].password,
-                };
-              } else {
-                merged.push(cu);
-              }
-            });
-            return merged;
-          });
+          setLocalAccounts(cloudUsers);
         }
       }, (err) => {
         console.warn("Could not sync users from Firestore: ", err);
@@ -288,7 +274,11 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 hintsUsed: 0,
                 lastActive: serverTimestamp(),
               };
-              await setDoc(userRef, newProfile);
+              await setDoc(userRef, {
+                ...newProfile,
+                email: currentUser.email || `${currentUser.uid}@google.com`,
+                username_lowercase: (cleanName || "Faithful Scholar").toLowerCase(),
+              });
               setProfile(newProfile);
               setUser(currentUser);
 
@@ -567,6 +557,27 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const normEmail = email.trim().toLowerCase();
     const cleanUName = username.trim();
 
+    // Verify uniqueness on Firestore first!
+    try {
+      const uRef = doc(db, "users", normEmail);
+      const snap = await getDoc(uRef);
+      if (snap.exists()) {
+        return "An account with this email already exists.";
+      }
+
+      // Check username uniqueness in DB case-insensitively
+      const usernameQuery = query(
+        collection(db, "users"),
+        where("username_lowercase", "==", cleanUName.toLowerCase())
+      );
+      const usernameSnap = await getDocs(usernameQuery);
+      if (!usernameSnap.empty) {
+        return "An account with this username already exists.";
+      }
+    } catch (err) {
+      console.warn("Could not check duplicate profiles on database: ", err);
+    }
+
     if (localAccounts.some(acc => acc.email.toLowerCase() === normEmail)) {
       return "An account with this email already exists.";
     }
@@ -607,6 +618,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await setDoc(uRef, {
         email: normEmail,
         username: cleanUName,
+        username_lowercase: cleanUName.toLowerCase(),
         password: pass,
         level: 1,
         xp: 0,
@@ -617,8 +629,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         lastActive: serverTimestamp()
       }, { merge: true });
       await logAchievement(normEmail, cleanUName, "created their Pilgrim Account and started searching Scripture!");
-    } catch {
-      // Ignored if offline
+    } catch (err) {
+      console.warn("Could not write profile to database: ", err);
     }
 
     return null; // success
@@ -627,10 +639,65 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // 3. Email Sign-In
   const signInWithEmail = async (identifier: string, pass: string): Promise<string | null> => {
     const cleanId = identifier.trim().toLowerCase();
-    const foundAcc = localAccounts.find(acc => 
-      acc.email.toLowerCase() === cleanId || 
-      acc.username.toLowerCase() === cleanId
-    );
+    let foundAcc: LocalUserAccount | undefined = undefined;
+
+    // A. Check Firestore directly first to ensure we can log in from any device!
+    try {
+      if (cleanId.includes("@")) {
+        // Look up by email as doc ID
+        const uRef = doc(db, "users", cleanId);
+        const snap = await getDoc(uRef);
+        if (snap.exists()) {
+          const data = snap.data();
+          foundAcc = {
+            email: data.email || snap.id,
+            username: data.username,
+            password: data.password || "",
+            level: data.level || 1,
+            xp: data.xp || 0,
+            gamesPlayed: data.gamesPlayed || 0,
+            hintsUsed: data.hintsUsed || 0,
+            isBanned: data.isBanned || false,
+            isGoogleUser: data.isGoogleUser ?? !data.password,
+          };
+        }
+      } else {
+        // Look up user by username (case-insensitive query via username_lowercase, or case-sensitive match)
+        const usersRef = collection(db, "users");
+        let q = query(usersRef, where("username_lowercase", "==", cleanId));
+        let qSnap = await getDocs(q);
+        if (qSnap.empty) {
+          q = query(usersRef, where("username", "==", identifier.trim()));
+          qSnap = await getDocs(q);
+        }
+
+        if (!qSnap.empty) {
+          const firstDoc = qSnap.docs[0];
+          const data = firstDoc.data();
+          foundAcc = {
+            email: data.email || firstDoc.id,
+            username: data.username,
+            password: data.password || "",
+            level: data.level || 1,
+            xp: data.xp || 0,
+            gamesPlayed: data.gamesPlayed || 0,
+            hintsUsed: data.hintsUsed || 0,
+            isBanned: data.isBanned || false,
+            isGoogleUser: data.isGoogleUser ?? !data.password,
+          };
+        }
+      }
+    } catch (err) {
+      console.warn("Could not retrieve user from Firestore during sign-in: ", err);
+    }
+
+    // B. Fallback to local accounts if Firestore check was offline or failed
+    if (!foundAcc) {
+      foundAcc = localAccounts.find(acc => 
+        acc.email.toLowerCase() === cleanId || 
+        acc.username.toLowerCase() === cleanId
+      );
+    }
 
     if (!foundAcc) {
       return "Incorrect email/username or password. Please verify your credentials.";
@@ -642,19 +709,31 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return "This pilgrim account has been BANNED by the Administrator.";
     }
 
+    // Cache the verified account locally, so it’s available in localAccounts state for offline
+    const finalAcc = foundAcc;
+    setLocalAccounts(prev => {
+      const idx = prev.findIndex(u => u.email.toLowerCase() === finalAcc.email.toLowerCase());
+      if (idx !== -1) {
+        const updated = [...prev];
+        updated[idx] = finalAcc;
+        return updated;
+      }
+      return [...prev, finalAcc];
+    });
+
     // Set active login states
-    setUser({ email: foundAcc.email, uid: foundAcc.email, displayName: foundAcc.username });
+    setUser({ email: finalAcc.email, uid: finalAcc.email, displayName: finalAcc.username });
     setProfile({
-      username: foundAcc.username,
-      level: foundAcc.level,
-      xp: foundAcc.xp,
-      gamesPlayed: foundAcc.gamesPlayed,
-      hintsUsed: foundAcc.hintsUsed,
+      username: finalAcc.username,
+      level: finalAcc.level,
+      xp: finalAcc.xp,
+      gamesPlayed: finalAcc.gamesPlayed,
+      hintsUsed: finalAcc.hintsUsed,
       lastActive: new Date().toISOString(),
     });
     setIsGuest(false);
     setIsAdmin(false);
-    localStorage.setItem("bible_quest_session_email", foundAcc.email);
+    localStorage.setItem("bible_quest_session_email", finalAcc.email);
 
     return null; // Success
   };
@@ -754,6 +833,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setDoc(uRef, {
         email: norm,
         username: cleanUName,
+        username_lowercase: cleanUName.toLowerCase(),
         password: pass,
         level: startLevel,
         xp: (startLevel - 1) * 500 + 100,
