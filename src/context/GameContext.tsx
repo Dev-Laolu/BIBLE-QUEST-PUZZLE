@@ -10,6 +10,7 @@ import {
   doc,
   getDoc,
   setDoc,
+  deleteDoc,
   collection,
   onSnapshot,
   query,
@@ -137,6 +138,57 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     localStorage.setItem("bible_quest_accounts", JSON.stringify(localAccounts));
   }, [localAccounts]);
+
+  // Real-time listener to sync Firestore "users" collection back into localAccounts
+  useEffect(() => {
+    try {
+      const usersRef = collection(db, "users");
+      const unsub = onSnapshot(usersRef, (snapshot) => {
+        const cloudUsers: LocalUserAccount[] = [];
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          if (data && data.username) {
+            cloudUsers.push({
+              email: data.email || docSnap.id,
+              username: data.username,
+              password: data.password || "",
+              level: data.level || 1,
+              xp: data.xp || 0,
+              gamesPlayed: data.gamesPlayed || 0,
+              hintsUsed: data.hintsUsed || 0,
+              isBanned: data.isBanned || false,
+              isGoogleUser: data.isGoogleUser ?? !data.password,
+            });
+          }
+        });
+
+        if (cloudUsers.length > 0) {
+          setLocalAccounts((prev) => {
+            const merged = [...prev];
+            cloudUsers.forEach((cu) => {
+              const idx = merged.findIndex((u) => u.email.toLowerCase() === cu.email.toLowerCase());
+              if (idx !== -1) {
+                // Merge, retaining existing passwords if cloud doesn't have it
+                merged[idx] = {
+                  ...merged[idx],
+                  ...cu,
+                  password: cu.password || merged[idx].password,
+                };
+              } else {
+                merged.push(cu);
+              }
+            });
+            return merged;
+          });
+        }
+      }, (err) => {
+        console.warn("Could not sync users from Firestore: ", err);
+      });
+      return () => unsub();
+    } catch (err) {
+      console.warn("Firestore onSnapshot setup error: ", err);
+    }
+  }, []);
 
   useEffect(() => {
     if (isGuest && !user) {
@@ -553,13 +605,17 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const uRef = doc(db, "users", normEmail);
       await setDoc(uRef, {
+        email: normEmail,
         username: cleanUName,
+        password: pass,
         level: 1,
         xp: 0,
         gamesPlayed: 0,
         hintsUsed: 0,
+        isBanned: false,
+        isGoogleUser: false,
         lastActive: serverTimestamp()
-      });
+      }, { merge: true });
       await logAchievement(normEmail, cleanUName, "created their Pilgrim Account and started searching Scripture!");
     } catch {
       // Ignored if offline
@@ -691,6 +747,26 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     setLocalAccounts(prev => [...prev, newAcc]);
+
+    // Async write to Firestore users collection
+    try {
+      const uRef = doc(db, "users", norm);
+      setDoc(uRef, {
+        email: norm,
+        username: cleanUName,
+        password: pass,
+        level: startLevel,
+        xp: (startLevel - 1) * 500 + 100,
+        gamesPlayed: 0,
+        hintsUsed: 0,
+        isBanned: false,
+        isGoogleUser: false,
+        lastActive: serverTimestamp(),
+      }, { merge: true });
+    } catch (err) {
+      console.warn("Could not sync created admin user to Firestore: ", err);
+    }
+
     return null; // success
   };
 
@@ -700,6 +776,15 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const updated = prev.map(acc => {
         if (acc.email.toLowerCase() === norm) {
           const nextBanned = !acc.isBanned;
+
+          // Sync ban status to Firestore
+          try {
+            const uRef = doc(db, "users", norm);
+            setDoc(uRef, { isBanned: nextBanned }, { merge: true });
+          } catch (err) {
+            console.warn("Could not sync ban status to Firestore: ", err);
+          }
+
           return { ...acc, isBanned: nextBanned };
         }
         return acc;
@@ -721,6 +806,14 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       logOut();
     }
     setLocalAccounts(prev => prev.filter(acc => acc.email.toLowerCase() !== norm));
+
+    // Delete from Firestore
+    try {
+      const uRef = doc(db, "users", norm);
+      deleteDoc(uRef);
+    } catch (err) {
+      console.warn("Could not delete user from Firestore: ", err);
+    }
   };
 
   const getAllUsers = (): LocalUserAccount[] => {
@@ -803,7 +896,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           await setDoc(userRef, {
             ...updatedProfile,
             lastActive: serverTimestamp()
-          });
+          }, { merge: true });
 
           if (levelsPassedRef > 0) {
             await logAchievement(

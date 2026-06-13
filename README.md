@@ -93,17 +93,24 @@ The gameboard supports multi-device gesture inputs:
 - **Responsive Dynamic Letter Sizing**: Adapts the size of cells based on grid proportions to ensure that level 11 & 12 puzzles with larger grid boundaries ($14 \times 14$ containing dozens of words) display optimally on smartphone screens with high-density spacing.
 - **Timer & Completion Engine**: Tracks elapsed time in seconds with an active local interval. Once all words are highlighted and completed, it triggers automated modal alerts, awards XP points, and posts achievements to the user's feed.
 
-### Phase 5: Dynamic State Registry (`src/context/GameContext.tsx`)
-This context operates as the heart of database interactions:
-1. **Hybrid Sync Engine**: Connects to the cloud backend (using Firebase Firestore & Auth integration rules) when online, and gracefully operates fully functional locally in standard browsers via sandbox `localStorage` arrays when server access is deferred.
-2. **Flexible Auth Triggers**: Redesigned the sign-in methods to accept either registered emails or customized alphanumeric usernames.
-3. **Automated Progress Verification**: Restores levels completed on page loading, locks succeeding chapters until previous missions are solved, and tallies points for correct items.
+### Phase 5: Dynamic State Registry & Real-Time Sync Engine (`src/context/GameContext.tsx`)
+This context operates as the heart of database interactions, engineered as a universal fully-synced engine:
+1. **Universal Real-Time Database Synchronization**: Uses active Firestore `onSnapshot` listeners to establish a live feed of all players inside the `users` collection. Any new user account created, progress made, ban toggled, or deleted profile immediately propagates across all connected clients in real-time. This guarantees the scoreboards and the Admin Panel are always universal, fully up-to-date, and accurately represent the active database.
+2. **Hybrid Offline Fallback Rules**: Gracefully maintains a robust browser-based `localStorage` system when Firestore access is deferred, ensuring seamless offline gameplay that catches up once the connection restabilizes.
+3. **Flexible Auth Triggers**: Redesigned the sign-in methods to accept either registered emails or customized alphanumeric usernames, checking databases for conflicts to avoid dual-claims.
+4. **Automated Progress & Levels Engine**: Tracks user level-ups, points (XP), hints, and levels completed, writing updates permanently to Firestore backends and logs milestone posts instantly.
 
 ### Phase 6: Interface Polish & HUD Design (`src/App.tsx`)
 The overarching style utilizes a polished **Theological Castle Slate** theme (rich `#0c0806` obsidian background, warm `#2d1b14` card grids, and fine `#d4af37` gold accents).
 - **Quest Board Layout**: Features clean level picking cards with status locks. The header area was specifically clean-scaled to display only the high-contrast physical app logo (sacred open book vector) directly on active quest sheets.
-- **Leaderboard & Community Feed**: Created reactive boards showing recent completions and community prayer requests.
-- **Archbishop Admin View**: Designed a powerful console matching `admin` access requirements (username `admin` and password `admin1234`). Admin can register new pilgrims, temporarily ban troublemakers, or permanently delete accounts with strict browser confirmations.
+- **Leaderboard & Community Feed**: Created reactive boards showing recent completions and community prayer requests synced instantly across users.
+- **Archbishop Admin View**: Designed a powerful, confirmation-guarded control room matching `admin` access requirements (username `admin` and password `admin1234`). Admin can register new pilgrims, set custom start levels, toggle ban state, or permanently erase players with live database reflects.
+
+### Phase 7: Key Security & Environment Protection
+To strictly safeguard application credentials and satisfy cloud safety standards:
+- **Environment Isolation**: Moved sensitive Firebase parameters out of source-tracked metadata files (like `firebase-applet-config.json`) and secured the key using `.env`/`.env.example` configurations.
+- **Vite Sandbox Resolution**: Resolves target API secrets client-side via `import.meta.env` with custom runtime checks, maintaining clean offline sandboxes if variables are temporarily omitted.
+- **Firestore Permission Hardening**: Configured strict rule sets within `firestore.rules` to correctly permit user registers, scoreboard lists, and admin modifications while blocking multi-user intrusions.
 
 ---
 

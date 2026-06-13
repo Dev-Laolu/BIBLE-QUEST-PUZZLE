@@ -8,11 +8,7 @@ service cloud.firestore {
 
     // Common helper functions
     function isSignedIn() {
-      return request.auth != null && request.auth.token.email_verified == true;
-    }
-
-    function isOwner(userId) {
-      return isSignedIn() && request.auth.uid == userId;
+      return request.auth != null;
     }
 
     function incoming() {
@@ -24,24 +20,25 @@ service cloud.firestore {
     }
 
     function isValidId(id) {
-      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-\\.]+@?[a-zA-Z0-9_\\-\\.]*$');
     }
 
     // Entity validations
     function isValidUser(data) {
       return data.keys().hasAll(['username', 'level', 'xp', 'gamesPlayed', 'hintsUsed', 'lastActive'])
-        && data.keys().size() == 6
         && data.username is string && data.username.size() >= 2 && data.username.size() <= 25
         && data.level is int && data.level >= 1 && data.level <= 100
         && data.xp is int && data.xp >= 0
         && data.gamesPlayed is int && data.gamesPlayed >= 0
-        && data.hintsUsed is int && data.hintsUsed >= 0;
+        && data.hintsUsed is int && data.hintsUsed >= 0
+        && (!data.keys().hasAny(['email']) || data.email is string)
+        && (!data.keys().hasAny(['password']) || data.password is string)
+        && (!data.keys().hasAny(['isBanned']) || data.isBanned is bool)
+        && (!data.keys().hasAny(['isGoogleUser']) || data.isGoogleUser is bool);
     }
 
     function isValidLeaderboardEntry(data) {
       return data.keys().hasAll(['userId', 'username', 'score', 'level', 'hintsUsed', 'completedAt'])
-        && data.keys().size() == 6
-        && data.userId == request.auth.uid
         && data.username is string && data.username.size() >= 2 && data.username.size() <= 25
         && data.score is int && data.score >= 0
         && data.level is int && data.level >= 1
@@ -50,52 +47,33 @@ service cloud.firestore {
 
     function isValidActivity(data) {
       return data.keys().hasAll(['userId', 'username', 'text', 'timestamp'])
-        && data.keys().size() == 4
-        && data.userId == request.auth.uid
         && data.username is string && data.username.size() >= 2 && data.username.size() <= 25
         && data.text is string && data.text.size() >= 2 && data.text.size() <= 150;
     }
 
     // Match patterns
     match /users/{userId} {
-      allow get: if isSignedIn();
-      allow create: if isOwner(userId)
-                    && isValidId(userId)
-                    && isValidUser(incoming())
-                    && incoming().lastActive == request.time;
-      allow update: if isOwner(userId)
-                    && isValidId(userId)
-                    && isValidUser(incoming())
-                    && incoming().lastActive == request.time
-                    && incoming().username == existing().username; // Username is immutable once set
-      allow delete: if false; // Cannot delete profile
+      allow get: if true;
+      allow list: if resource.data.username != null;
+      allow create, update: if isValidId(userId)
+                            && isValidUser(incoming());
+      allow delete: if true; 
     }
 
     match /leaderboards/{dayId}/scores/{scoreId} {
-      allow get: if isSignedIn();
-      allow list: if isSignedIn() && resource.data.userId != null;
-      allow create: if isSignedIn()
-                    && scoreId == request.auth.uid
-                    && isValidId(dayId)
-                    && isValidId(scoreId)
-                    && isValidLeaderboardEntry(incoming())
-                    && incoming().completedAt == request.time;
-      allow update: if isSignedIn()
-                    && scoreId == request.auth.uid
-                    && isValidId(dayId)
-                    && isValidId(scoreId)
-                    && isValidLeaderboardEntry(incoming())
-                    && incoming().completedAt == request.time;
-      allow delete: if false;
+      allow get: if true;
+      allow list: if resource.data.userId != null;
+      allow create, update: if isValidId(dayId)
+                            && isValidId(scoreId)
+                            && isValidLeaderboardEntry(incoming());
+      allow delete: if true;
     }
 
     match /activities/{activityId} {
-      allow get: if isSignedIn();
-      allow list: if isSignedIn() && resource.data.userId != null;
-      allow create: if isSignedIn()
-                    && isValidId(activityId)
-                    && isValidActivity(incoming())
-                    && incoming().timestamp == request.time;
+      allow get: if true;
+      allow list: if resource.data.userId != null;
+      allow create: if isValidId(activityId)
+                    && isValidActivity(incoming());
       allow update, delete: if false; // Activities are write-once/immutable
     }
   }
