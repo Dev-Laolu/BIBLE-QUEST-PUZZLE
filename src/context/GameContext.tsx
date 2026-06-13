@@ -34,6 +34,11 @@ export interface LocalUserAccount {
   hintsUsed: number;
   isBanned: boolean;
   isGoogleUser: boolean;
+  uid?: string;
+  creationTime?: string;
+  lastSignInTime?: string;
+  photoURL?: string;
+  emailVerified?: boolean;
 }
 
 interface GameContextType {
@@ -59,6 +64,7 @@ interface GameContextType {
   adminAddUser: (email: string, username: string, pass: string, startLevel: number) => string | null;
   adminToggleBanUser: (email: string) => void;
   adminDeleteUser: (email: string) => void;
+  adminUpdateUser: (email: string, updates: Partial<LocalUserAccount>) => Promise<string | null>;
   getAllUsers: () => LocalUserAccount[];
   users: LocalUserAccount[];
 
@@ -160,6 +166,11 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
               hintsUsed: data.hintsUsed || 0,
               isBanned: data.isBanned || false,
               isGoogleUser: data.isGoogleUser ?? !data.password,
+              uid: data.uid || docSnap.id || "",
+              creationTime: data.creationTime || "",
+              lastSignInTime: data.lastSignInTime || "",
+              photoURL: data.photoURL || "",
+              emailVerified: data.emailVerified ?? false,
             });
           }
         });
@@ -243,7 +254,21 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
               setProfile(cloudProf);
               setUser(currentUser);
 
-              // Update local registry cache too
+              // Merge latest Auth metadata back to Firestore
+              try {
+                await setDoc(userRef, {
+                  uid: currentUser.uid,
+                  emailVerified: currentUser.emailVerified,
+                  photoURL: currentUser.photoURL || "",
+                  creationTime: currentUser.metadata.creationTime || "",
+                  lastSignInTime: currentUser.metadata.lastSignInTime || "",
+                  isGoogleUser: true,
+                }, { merge: true });
+              } catch (metaErr) {
+                console.warn("Could not sync Google auth metadata: ", metaErr);
+              }
+
+              // Update local registry cache too with updated metadata
               setLocalAccounts(prev => {
                 const existing = prev.find(a => a.email.toLowerCase() === currentUser.email?.toLowerCase());
                 const wasBanned = existing ? existing.isBanned : false;
@@ -259,6 +284,11 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     hintsUsed: cloudProf.hintsUsed,
                     isBanned: wasBanned,
                     isGoogleUser: true,
+                    uid: currentUser.uid,
+                    photoURL: currentUser.photoURL || "",
+                    emailVerified: currentUser.emailVerified,
+                    creationTime: currentUser.metadata.creationTime || "",
+                    lastSignInTime: currentUser.metadata.lastSignInTime || "",
                   }
                 ];
               });
@@ -278,6 +308,12 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 ...newProfile,
                 email: currentUser.email || `${currentUser.uid}@google.com`,
                 username_lowercase: (cleanName || "Faithful Scholar").toLowerCase(),
+                uid: currentUser.uid,
+                emailVerified: currentUser.emailVerified,
+                photoURL: currentUser.photoURL || "",
+                creationTime: currentUser.metadata.creationTime || "",
+                lastSignInTime: currentUser.metadata.lastSignInTime || "",
+                isGoogleUser: true,
               });
               setProfile(newProfile);
               setUser(currentUser);
@@ -298,6 +334,11 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     hintsUsed: newProfile.hintsUsed,
                     isBanned: wasBanned,
                     isGoogleUser: true,
+                    uid: currentUser.uid,
+                    photoURL: currentUser.photoURL || "",
+                    emailVerified: currentUser.emailVerified,
+                    creationTime: currentUser.metadata.creationTime || "",
+                    lastSignInTime: currentUser.metadata.lastSignInTime || "",
                   }
                 ];
               });
@@ -585,6 +626,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return "An account with this username already exists.";
     }
 
+    const nowISO = new Date().toUTCString();
     const newAcc: LocalUserAccount = {
       email: normEmail,
       username: cleanUName,
@@ -594,7 +636,10 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       gamesPlayed: 0,
       hintsUsed: 0,
       isBanned: false,
-      isGoogleUser: false
+      isGoogleUser: false,
+      uid: normEmail,
+      creationTime: nowISO,
+      lastSignInTime: nowISO,
     };
 
     // Update state and persistent cache
@@ -626,7 +671,10 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         hintsUsed: 0,
         isBanned: false,
         isGoogleUser: false,
-        lastActive: serverTimestamp()
+        lastActive: serverTimestamp(),
+        uid: normEmail,
+        creationTime: nowISO,
+        lastSignInTime: nowISO,
       }, { merge: true });
       await logAchievement(normEmail, cleanUName, "created their Pilgrim Account and started searching Scripture!");
     } catch (err) {
@@ -659,6 +707,11 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             hintsUsed: data.hintsUsed || 0,
             isBanned: data.isBanned || false,
             isGoogleUser: data.isGoogleUser ?? !data.password,
+            uid: data.uid || snap.id || "",
+            creationTime: data.creationTime || "",
+            lastSignInTime: data.lastSignInTime || "",
+            photoURL: data.photoURL || "",
+            emailVerified: data.emailVerified ?? false,
           };
         }
       } else {
@@ -684,6 +737,11 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             hintsUsed: data.hintsUsed || 0,
             isBanned: data.isBanned || false,
             isGoogleUser: data.isGoogleUser ?? !data.password,
+            uid: data.uid || firstDoc.id || "",
+            creationTime: data.creationTime || "",
+            lastSignInTime: data.lastSignInTime || "",
+            photoURL: data.photoURL || "",
+            emailVerified: data.emailVerified ?? false,
           };
         }
       }
@@ -734,6 +792,18 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsGuest(false);
     setIsAdmin(false);
     localStorage.setItem("bible_quest_session_email", finalAcc.email);
+
+    // Sync latest login timestamp to Firestore
+    try {
+      const docId = finalAcc.uid || finalAcc.email;
+      const uRef = doc(db, "users", docId);
+      await setDoc(uRef, {
+        lastSignInTime: new Date().toUTCString(),
+        lastActive: serverTimestamp(),
+      }, { merge: true });
+    } catch (err) {
+      console.warn("Could not sync email login metadata to Firestore: ", err);
+    }
 
     return null; // Success
   };
@@ -857,9 +927,11 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (acc.email.toLowerCase() === norm) {
           const nextBanned = !acc.isBanned;
 
-          // Sync ban status to Firestore
+          // Sync ban status to Firestore with target dynamic doc ID protection
           try {
-            const uRef = doc(db, "users", norm);
+            const foundTarget = prev.find(a => a.email.toLowerCase() === norm);
+            const docId = (foundTarget && foundTarget.uid) ? foundTarget.uid : norm;
+            const uRef = doc(db, "users", docId);
             setDoc(uRef, { isBanned: nextBanned }, { merge: true });
           } catch (err) {
             console.warn("Could not sync ban status to Firestore: ", err);
@@ -885,14 +957,70 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (user && user.email.toLowerCase() === norm) {
       logOut();
     }
+    
+    // Find doc ID first
+    const foundTarget = localAccounts.find(a => a.email.toLowerCase() === norm);
+    const docId = (foundTarget && foundTarget.uid) ? foundTarget.uid : norm;
+
     setLocalAccounts(prev => prev.filter(acc => acc.email.toLowerCase() !== norm));
 
     // Delete from Firestore
     try {
-      const uRef = doc(db, "users", norm);
+      const uRef = doc(db, "users", docId);
       deleteDoc(uRef);
     } catch (err) {
       console.warn("Could not delete user from Firestore: ", err);
+    }
+  };
+
+  const adminUpdateUser = async (email: string, updates: Partial<LocalUserAccount>): Promise<string | null> => {
+    const norm = email.trim().toLowerCase();
+    
+    let docId = norm;
+    let foundTarget = localAccounts.find(a => a.email.toLowerCase() === norm);
+    if (foundTarget && foundTarget.uid) {
+      docId = foundTarget.uid;
+    }
+
+    setLocalAccounts(prev => prev.map(acc => {
+      if (acc.email.toLowerCase() === norm) {
+        return { ...acc, ...updates };
+      }
+      return acc;
+    }));
+
+    // Sync to Firestore
+    try {
+      const uRef = doc(db, "users", docId);
+      const cloudPayload: any = {};
+      if (updates.username !== undefined) {
+        cloudPayload.username = updates.username;
+        cloudPayload.username_lowercase = updates.username.toLowerCase();
+      }
+      if (updates.level !== undefined) {
+        cloudPayload.level = Number(updates.level);
+      }
+      if (updates.xp !== undefined) {
+        cloudPayload.xp = Number(updates.xp);
+      }
+      if (updates.gamesPlayed !== undefined) {
+        cloudPayload.gamesPlayed = Number(updates.gamesPlayed);
+      }
+      if (updates.hintsUsed !== undefined) {
+        cloudPayload.hintsUsed = Number(updates.hintsUsed);
+      }
+      if (updates.password !== undefined) {
+        cloudPayload.password = updates.password;
+      }
+      if (updates.isBanned !== undefined) {
+        cloudPayload.isBanned = updates.isBanned;
+      }
+
+      await setDoc(uRef, cloudPayload, { merge: true });
+      return null;
+    } catch (err) {
+      console.warn("Could not sync user update to Firestore: ", err);
+      return "Profile updated locally, but cloud sync is unreachable/offline.";
     }
   };
 
@@ -1073,6 +1201,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         adminAddUser,
         adminToggleBanUser,
         adminDeleteUser,
+        adminUpdateUser,
         getAllUsers,
         users: localAccounts,
         updateProgress,
